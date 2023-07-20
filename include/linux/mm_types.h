@@ -27,6 +27,9 @@
 
 struct address_space;
 struct mem_cgroup;
+#ifdef CONFIG_FAASCALE_MEMORY
+struct faascale_mem_region;
+#endif
 
 /*
  * Each physical page in the system has a struct page associated with
@@ -204,6 +207,9 @@ struct page {
 	union {
 		struct mem_cgroup *mem_cgroup;
 		struct obj_cgroup **obj_cgroups;
+#ifdef CONFIG_FAASCALE_MEMORY
+		struct faascale_mem_region *mem_region;
+#endif
 	};
 #endif
 

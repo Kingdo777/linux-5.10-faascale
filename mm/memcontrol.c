@@ -5002,6 +5002,135 @@ out_kfree:
 	return ret;
 }
 
+#ifdef CONFIG_FAASCALE_MEMORY
+static int memory_faascale_enable_show(struct seq_file *m, void *v)
+{
+    seq_printf(m, "%d\n", READ_ONCE(mem_cgroup_from_seq(m)->faascale_mem_enable));
+    return 0;
+}
+
+static int memory_faascale_size_show(struct seq_file *m, void *v)
+{
+    long size;
+    size = READ_ONCE(mem_cgroup_from_seq(m)->faascale_mem_size);
+    seq_printf(m, "%ld\n", size);
+    return 0;
+}
+
+//__attribute__((optimize("Og")))
+static ssize_t memory_faascale_size_write(struct kernfs_open_file *of,
+                                            char *buf, size_t nbytes,
+                                            loff_t off)
+{
+    struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+    int order;
+    unsigned long size, size_order, size_for_write;
+    char *end;
+    u64 bytes;
+    int blocks_count[FAASCALE_MEMORY_MAX_ORDER], i;
+    struct zonelist* zonelist;
+    struct zoneref *z;
+    struct zone *zone;
+    struct faascale_mem_block *block;
+    LIST_HEAD(block_list);
+    struct list_head *pos, *n;
+
+    size = READ_ONCE(memcg->faascale_mem_size);
+    if (size != 0) {
+        pr_info( "KINGDO: Faascale Memory has been enabled.\n");
+        return -EINVAL;
+    }
+
+    buf = strstrip(buf);
+    bytes = memparse(buf, &end);
+    if (*end != '\0' || bytes == 0)
+        return -EINVAL;
+
+    size = clamp(bytes, (u64)FAASCALE_MEMORY_MIN_REGION_SIZE,
+                  (u64)FAASCALE_MEMORY_MAX_REGION_SIZE);
+
+    size = ALIGN(size, FAASCALE_MEMORY_MIN_BLOCK_SIZE);
+    size_for_write = size;
+
+    if (size > ((totalblock_pages() - global_zone_page_state(NR_ACTIVE_FAASCALE_BLOCK_PAGES)) << PAGE_SHIFT)) {
+		pr_info( "KINGDO: Faascale Memory is not enough.\n");
+		return -EINVAL;
+    }
+
+    memset(blocks_count,0,sizeof(blocks_count));
+
+    order = FAASCALE_MEMORY_MAX_ORDER - 1;
+    while (size >= FAASCALE_MEMORY_MAX_BLOCK_SIZE) {
+		blocks_count[order]++;
+		size -= FAASCALE_MEMORY_MAX_BLOCK_SIZE;
+    }
+
+    order--;
+    while (order >= 0 && size > 0) {
+		size_order = FAASCALE_MEMORY_MIN_BLOCK_SIZE << order;
+		if (size >= size_order) {
+			blocks_count[order]++;
+			size -= size_order;
+		}
+		order--;
+    }
+    zonelist = node_zonelist(0,0);
+    for (order = FAASCALE_MEMORY_MAX_ORDER - 1; order >= 0; order--) {
+		for (i = 0; i < blocks_count[order]; i++) {
+			for_each_zone_zonelist(zone, z, zonelist, ZONE_NORMAL){
+				if(!populated_zone(zone) || ! zone->enable_block)
+					continue;
+				block = alloc_zone_block(zone, order, false);
+				if (block != NULL)
+					goto find_block;
+			}
+
+			for_each_zone_zonelist(zone, z, zonelist, ZONE_NORMAL){
+				if(!populated_zone(zone) || ! zone->enable_block)
+					continue;
+				block = alloc_zone_block(zone, order, true);
+				if (block != NULL)
+					goto find_block;
+			}
+
+			// 我真是天才，想到这行代码
+			if (order > 0)
+				blocks_count[order - 1] += 2;
+			else
+				goto insufficient_blocks;
+			continue;
+
+		find_block:
+			list_add_tail(&block->list, &block_list);
+		}
+    }
+	goto build_region;
+insufficient_blocks:
+	list_for_each_safe(pos, n, &block_list){
+		block = list_entry(pos, struct faascale_mem_block, list);
+		list_del(pos);
+		free_one_block(block);
+	}
+	BUG_ON(!list_empty(&block_list));
+	pr_info( "KINGDO: Faascale Blocks is insufficirnt.");
+	return -EINVAL;
+build_region:
+	list_for_each_safe(pos, n,&block_list){
+		block = list_entry(pos, struct faascale_mem_block, list);
+		list_del(pos);
+		add_block_to_region(&memcg->region, block);
+	}
+	BUG_ON(!list_empty(&block_list));
+
+	memcg->region.kingdo_magic = FAASCALE_MAGIC;
+
+    WRITE_ONCE(memcg->faascale_mem_size, size_for_write);
+    WRITE_ONCE(memcg->faascale_mem_enable, true);
+
+    return nbytes;
+}
+#endif
+
 static struct cftype mem_cgroup_legacy_files[] = {
 	{
 		.name = "usage_in_bytes",
@@ -5128,6 +5257,24 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.write = mem_cgroup_reset,
 		.read_u64 = mem_cgroup_read_u64,
 	},
+#ifdef CONFIG_FAASCALE_MEMORY
+    {
+            .name = "faascale.enable",
+            .flags = CFTYPE_NOT_ON_ROOT,
+            .seq_show = memory_faascale_enable_show,
+    },
+    {
+            .name = "faascale.size",
+            .flags = CFTYPE_NOT_ON_ROOT,
+            .seq_show = memory_faascale_size_show,
+            .write = memory_faascale_size_write,
+    },
+
+	{
+		.name = "block.state",
+		.flags = CFTYPE_NOT_ON_ROOT,
+	},
+#endif
 	{ },	/* terminate */
 };
 
@@ -5260,6 +5407,15 @@ static void __mem_cgroup_free(struct mem_cgroup *memcg)
 		free_mem_cgroup_per_node_info(memcg, node);
 	free_percpu(memcg->vmstats_percpu);
 	free_percpu(memcg->vmstats_local);
+#ifdef CONFIG_FAASCALE_MEMORY
+	/**
+	 * 目前我们仅仅是针对匿名页才使用block的内存，但是当我们删除一个memcg的目录时，并不一定会
+	 * 触发该函数，因为用作pagecache的页还没有被回收，这些页依然拥有memcg.css的引用计数,
+	 * 可以通过命令 `echo 1 > /sys/fs/cgroup/memory/test/memory.force_empty`来进行清除
+	*/
+	if(memcg->faascale_mem_enable)
+		faascale_mem_region_free(&memcg->region);
+#endif
 	kfree(memcg);
 }
 
@@ -5323,6 +5479,11 @@ static struct mem_cgroup *mem_cgroup_alloc(void)
 	INIT_LIST_HEAD(&memcg->event_list);
 	spin_lock_init(&memcg->event_list_lock);
 	memcg->socket_pressure = jiffies;
+#ifdef CONFIG_FAASCALE_MEMORY
+	memcg->faascale_mem_enable = false;
+	memcg->faascale_mem_size = 0;
+	faascale_mem_region_init(&memcg->region);
+#endif
 #ifdef CONFIG_MEMCG_KMEM
 	memcg->kmemcg_id = -1;
 	INIT_LIST_HEAD(&memcg->objcg_list);
@@ -6572,6 +6733,23 @@ static struct cftype memory_files[] = {
 		.seq_show = memory_oom_group_show,
 		.write = memory_oom_group_write,
 	},
+#ifdef CONFIG_FAASCALE_MEMORY
+     {
+		.name = "faascale.enable",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_faascale_enable_show,
+	},
+	{
+		.name = "faascale.size",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_faascale_size_show,
+		.write = memory_faascale_size_write,
+	},
+	{
+		.name = "block.state",
+		.flags = CFTYPE_NOT_ON_ROOT,
+	},
+#endif
 	{ }	/* terminate */
 };
 
@@ -6926,6 +7104,11 @@ static void uncharge_page(struct page *page, struct uncharge_gather *ug)
 	ug->dummy_page = page;
 	page->mem_cgroup = NULL;
 	css_put(&ug->memcg->css);
+#ifdef CONFIG_FAASCALE_MEMORY
+	if (page_in_region(page, &ug->memcg->region)){
+		page->mem_region = &ug->memcg->region;
+	}
+#endif
 }
 
 static void uncharge_list(struct list_head *page_list)

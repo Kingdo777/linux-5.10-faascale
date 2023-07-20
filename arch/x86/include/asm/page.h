@@ -38,6 +38,13 @@ static inline void copy_user_page(void *to, void *from, unsigned long vaddr,
 	alloc_page_vma(GFP_HIGHUSER | __GFP_ZERO | movableflags, vma, vaddr)
 #define __HAVE_ARCH_ALLOC_ZEROED_USER_HIGHPAGE
 
+#ifdef CONFIG_FAASCALE_MEMORY
+#define __alloc_zeroed_user_highpage_within_faascale(movableflags, vma, vaddr) \
+    alloc_page_vma(GFP_HIGHUSER | __GFP_ZERO | __GFP_FAASCALE | movableflags, vma, vaddr)
+#else
+#define __alloc_zeroed_user_highpage_within_faascale(movableflags, vma, vaddr) __alloc_zeroed_user_highpage(movableflags, vma, vaddr)
+#endif
+
 #ifndef __pa
 #define __pa(x)		__phys_addr((unsigned long)(x))
 #endif

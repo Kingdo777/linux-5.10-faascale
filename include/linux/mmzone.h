@@ -38,6 +38,27 @@
  */
 #define PAGE_ALLOC_COSTLY_ORDER 3
 
+#ifdef CONFIG_FAASCALE_MEMORY
+/*
+ * FAASCALE_MEMORY_MAX_ORDER = (FAASCALE_MEMORY_MAX_BLOCK_SHIFT - \
+ * 	FAASCALE_MEMORY_MIN_BLOCK_SHIFT + 1)
+ */
+#define FAASCALE_MEMORY_MAX_ORDER 8
+#define FAASCALE_MEMORY_MIN_BLOCK_SHIFT (MAX_ORDER -1 + PAGE_SHIFT) // 4MB
+#define FAASCALE_MEMORY_MAX_BLOCK_SHIFT (FAASCALE_MEMORY_MIN_BLOCK_SHIFT + FAASCALE_MEMORY_MAX_ORDER -1) // 512MB
+#define FAASCALE_MEMORY_MIN_REGION_SHIFT 26 // 64MB
+#define FAASCALE_MEMORY_MAX_REGION_SHIFT 32 // 4GB
+
+#define faascale_mem_block_order_2_pages(order) (1UL << (FAASCALE_MEMORY_MIN_BLOCK_SHIFT - PAGE_SHIFT + (order)))
+#define faascale_mem_block_order_2_buddy_pages(order)                                                                  \
+	(1UL << (FAASCALE_MEMORY_MIN_BLOCK_SHIFT - PAGE_SHIFT - (MAX_ORDER - 1) + (order)))	// which is equal `order`
+
+#define FAASCALE_MEMORY_RESERVE_PAGES_PER_ZONE (1 << (28 - PAGE_SHIFT)) // 256MB
+
+#define FAASCALE_MAGIC 0x004B494E47444F00
+
+#endif
+
 enum migratetype {
 	MIGRATE_UNMOVABLE,
 	MIGRATE_MOVABLE,
@@ -65,6 +86,10 @@ enum migratetype {
 #endif
 	MIGRATE_TYPES
 };
+
+#ifdef CONFIG_FAASCALE_MEMORY
+#define FAASCALE_MIGRATE MIGRATE_MOVABLE
+#endif
 
 /* In mm/page_alloc.c; keep in sync also with show_migration_types() there */
 extern const char * const migratetype_names[MIGRATE_TYPES];
@@ -109,6 +134,28 @@ static inline bool free_area_empty(struct free_area *area, int migratetype)
 {
 	return list_empty(&area->free_list[migratetype]);
 }
+
+#ifdef CONFIG_FAASCALE_MEMORY
+
+#define for_each_free_faascale_block_order(order) \
+	for (order = 0; order < FAASCALE_MEMORY_MAX_ORDER; order++)
+
+struct free_faascale_block_area {
+	struct list_head free_list;
+	unsigned long nr_free;
+};
+
+static inline struct page *get_page_from_free_faascale_block(struct free_faascale_block_area *block_area)
+{
+	return list_first_entry_or_null(&block_area->free_list, struct page, lru);
+}
+
+static inline bool free_faascale_block_empty(struct free_faascale_block_area *block_area)
+{
+	return list_empty(&block_area->free_list);
+}
+
+#endif
 
 struct pglist_data;
 
@@ -159,6 +206,10 @@ enum zone_stat_item {
 	NR_ZSPAGES,		/* allocated in zsmalloc */
 #endif
 	NR_FREE_CMA_PAGES,
+#ifdef CONFIG_FAASCALE_MEMORY
+	NR_FREE_FAASCALE_BLOCK_PAGES,
+	NR_ACTIVE_FAASCALE_BLOCK_PAGES,
+#endif
 	NR_VM_ZONE_STAT_ITEMS };
 
 enum node_stat_item {
@@ -342,6 +393,44 @@ struct per_cpu_nodestat {
 	s8 vm_node_stat_diff[NR_VM_NODE_STAT_ITEMS];
 };
 
+#ifdef CONFIG_FAASCALE_MEMORY
+
+struct faascale_mem_block {
+	unsigned long block_start_pfn;
+
+	/// managed_pages = block_end_pfn - block_start_pfn;
+	/// managed_pages = 1 << order
+	unsigned int order;
+	unsigned long managed_pages;
+
+	struct zone *block_zone;
+
+	bool populated;
+
+	struct list_head list;
+
+	// TODO
+	// struct per_cpu_pageset __percpu *pageset;
+};
+
+
+struct faascale_mem_region {
+
+	unsigned long kingdo_magic;
+
+	struct list_head block_list;
+
+	/* free areas of different sizes */
+	struct free_area free_area[MAX_ORDER];
+
+	unsigned long buddy_block_count;
+
+	/* Primarily protects free_area */
+	spinlock_t lock;
+};
+
+#endif /* CONFIG_FAASCALE_MEMORY */
+
 #endif /* !__GENERATING_BOUNDS.H */
 
 enum zone_type {
@@ -500,6 +589,27 @@ struct zone {
 	atomic_long_t		managed_pages;
 	unsigned long		spanned_pages;
 	unsigned long		present_pages;
+#ifdef CONFIG_FAASCALE_MEMORY
+	// We assume that the hole only exists at the front end of the zone
+	unsigned long block_start_pfn;
+
+	/*
+	 * following two vars remain unchanged:
+	 * 	spanned_pages = zone_end_pfn - zone_start_pfn;
+	 * 	present_pages = spanned_pages - absent_pages(pages in holes);
+	 * A part of managed_pages is divided into blocked_page
+	 * 	managed_pages = present_pages - reserved_pages - block_spanned_pages;
+	 * */
+	atomic_long_t block_managed_pages;
+	unsigned long block_spanned_pages;
+	unsigned long block_present_pages;
+
+	/*
+	 * Only in DMA32 and Normal zones, and these zones are large enough
+	 * to accommodate a Block, it will be enabled.
+	 * */
+	bool enable_block;
+#endif
 
 	const char		*name;
 
@@ -570,6 +680,14 @@ struct zone {
 	bool			contiguous;
 
 	ZONE_PADDING(_pad3_)
+#ifdef CONFIG_FAASCALE_MEMORY
+	struct free_faascale_block_area free_block_area[FAASCALE_MEMORY_MAX_ORDER];
+
+	/* Primarily protects free_area */
+	spinlock_t		block_lock;
+
+	ZONE_PADDING(_pad4_)
+#endif
 	/* Zone statistics */
 	atomic_long_t		vm_stat[NR_VM_ZONE_STAT_ITEMS];
 	atomic_long_t		vm_numa_stat[NR_VM_NUMA_STAT_ITEMS];
@@ -596,6 +714,18 @@ static inline unsigned long zone_managed_pages(struct zone *zone)
 {
 	return (unsigned long)atomic_long_read(&zone->managed_pages);
 }
+#ifdef CONFIG_FAASCALE_MEMORY
+static inline unsigned long zone_block_managed_pages(struct zone *zone)
+{
+	return (unsigned long)atomic_long_read(&zone->block_managed_pages);
+}
+
+static inline bool region_is_initialized(struct faascale_mem_region *region)
+{
+	return region && region->kingdo_magic == FAASCALE_MAGIC;
+}
+
+#endif
 
 static inline unsigned long zone_end_pfn(const struct zone *zone)
 {

@@ -1163,6 +1163,10 @@ const char * const vmstat_text[] = {
 	"nr_zspages",
 #endif
 	"nr_free_cma",
+#ifdef CONFIG_FAASCALE_MEMORY
+	"nr_free_faascale_block_pages",
+	"nr_active_faascale_block_pages",
+#endif
 
 	/* enum numa_stat_item counters */
 #ifdef CONFIG_NUMA
@@ -1645,6 +1649,22 @@ static void zoneinfo_show_print(struct seq_file *m, pg_data_t *pgdat,
 	for (i = 1; i < ARRAY_SIZE(zone->lowmem_reserve); i++)
 		seq_printf(m, ", %ld", zone->lowmem_reserve[i]);
 	seq_putc(m, ')');
+
+#ifdef CONFIG_FAASCALE_MEMORY
+	seq_printf(m,
+		   "\n  block free     %lu"
+		   "\n        active  %lu"
+		   "\n        inactive  %lu"
+		   "\n        block_spanned  %lu"
+		   "\n        block_present  %lu"
+		   "\n        block_managed  %lu",
+		   zone_page_state(zone, NR_FREE_FAASCALE_BLOCK_PAGES),
+		   zone_page_state(zone, NR_ACTIVE_FAASCALE_BLOCK_PAGES),
+		   zone_block_managed_pages(zone) - zone_page_state(zone, NR_ACTIVE_FAASCALE_BLOCK_PAGES),
+		   zone->block_spanned_pages,
+		   zone->block_present_pages,
+		   zone_block_managed_pages(zone));
+#endif
 
 	/* If unpopulated, no other information is useful */
 	if (!populated_zone(zone)) {

@@ -211,6 +211,13 @@ config MEMORY_BALLOON
 	bool
 
 #
+# support for function memory block
+config FAASCALE_MEMORY
+	bool "Allow for serverless function memory scale"
+	def_bool y
+	depends on MEMORY_BALLOON
+
+#
 # support for memory balloon compaction
 config BALLOON_COMPACTION
 	bool "Allow for balloon memory compaction/migration"

@@ -77,6 +77,31 @@ static inline void totalram_pages_add(long count)
 	atomic_long_add(count, &_totalram_pages);
 }
 
+#ifdef CONFIG_FAASCALE_MEMORY
+
+extern atomic_long_t _totalblock_pages;
+static inline unsigned long totalblock_pages(void)
+{
+	return (unsigned long)atomic_long_read(&_totalblock_pages);
+}
+
+static inline void totalblock_pages_inc(void)
+{
+	atomic_long_inc(&_totalblock_pages);
+}
+
+static inline void totalblock_pages_dec(void)
+{
+	atomic_long_dec(&_totalblock_pages);
+}
+
+static inline void totalblock_pages_add(long count)
+{
+	atomic_long_add(count, &_totalblock_pages);
+}
+
+#endif
+
 extern void * high_memory;
 extern int page_cluster;
 

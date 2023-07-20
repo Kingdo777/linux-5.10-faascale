@@ -1912,20 +1912,101 @@ static void __init __free_pages_memory(unsigned long start, unsigned long end)
 		start += (1UL << order);
 	}
 }
+#ifdef CONFIG_FAASCALE_MEMORY
+static unsigned long __init __free_pages_memory_to_faascale_mem(struct zone *zone, unsigned long start_pfn,
+								unsigned long end_pfn)
+{
+	int order;
+	unsigned long zone_start_pfn = zone->zone_start_pfn;
+	unsigned long zone_end_pfn = zone_start_pfn + zone->spanned_pages;
+
+	unsigned long block_start_pfn = zone->block_start_pfn;
+	unsigned long block_end_pfn = block_start_pfn + zone->block_spanned_pages;
+
+	unsigned long start_zone, end_zone, start_block, end_block;
+	unsigned long count = 0;
+	unsigned long tmp;
+
+	start_zone = clamp(start_pfn, zone_start_pfn, zone_end_pfn);
+	end_zone = clamp(end_pfn, zone_start_pfn, zone_end_pfn);
+
+	if (end_zone <= start_zone)
+		return 0;
+
+	if (zone->enable_block) {
+		start_block = clamp(block_start_pfn, start_zone, end_zone);
+		end_block = clamp(block_end_pfn, start_zone, end_zone);
+		if (start_block > start_zone) {
+			__free_pages_memory(start_zone, start_block);
+			count += start_block - start_zone;
+		}
+		if (end_zone > end_block) {
+			__free_pages_memory(end_block, end_zone);
+			count += start_block - start_zone;
+		}
+		while (start_block < end_block) {
+			order = FAASCALE_MEMORY_MAX_ORDER - 1UL;
+			while (start_block + faascale_mem_block_order_2_pages(order) > end_block ||
+			       !IS_ALIGNED(start_block, faascale_mem_block_order_2_pages(order))) {
+				order--;
+				if (order < 0)
+					break;
+			}
+			if (order < 0) {
+				tmp = ALIGN(start_block, faascale_mem_block_order_2_pages(0));
+				if (end_block <= tmp || tmp == start_block) {
+					__free_pages_memory(start_block, end_block);
+					count += end_block - start_block;
+					break;
+				} else {
+					__free_pages_memory(start_block, tmp);
+					count += tmp - start_block;
+					start_block = tmp;
+				}
+			} else {
+				memblock_free_pages_to_faascale_mem(pfn_to_page(start_block), order);
+				start_block += faascale_mem_block_order_2_pages(order);
+			}
+		}
+
+	} else {
+		__free_pages_memory(start_zone, end_zone);
+		count = end_zone - start_zone;
+	}
+	return count;
+}
+#endif
 
 static unsigned long __init __free_memory_core(phys_addr_t start,
-				 phys_addr_t end)
+				 phys_addr_t end, int nid)
 {
 	unsigned long start_pfn = PFN_UP(start);
 	unsigned long end_pfn = min_t(unsigned long,
 				      PFN_DOWN(end), max_low_pfn);
+#ifdef CONFIG_FAASCALE_MEMORY
+	int j;
+	unsigned long count = 0;
+	struct pglist_data *node;
+#endif
 
 	if (start_pfn >= end_pfn)
 		return 0;
 
+#ifdef CONFIG_FAASCALE_MEMORY
+	node = NODE_DATA(nid);
+	for (j = 0; j < MAX_NR_ZONES; j++) {
+		struct zone *zone = node->node_zones + j;
+
+		if (!populated_zone(zone))
+			continue;
+		count += __free_pages_memory_to_faascale_mem(zone, start_pfn, end_pfn);
+	}
+	return count;
+#else
 	__free_pages_memory(start_pfn, end_pfn);
 
 	return end_pfn - start_pfn;
+#endif
 }
 
 static unsigned long __init free_low_memory_core_early(void)
@@ -1933,6 +2014,7 @@ static unsigned long __init free_low_memory_core_early(void)
 	unsigned long count = 0;
 	phys_addr_t start, end;
 	u64 i;
+	int nid;
 
 	memblock_clear_hotplug(0, -1);
 
@@ -1945,8 +2027,8 @@ static unsigned long __init free_low_memory_core_early(void)
 	 *  low ram will be on Node1
 	 */
 	for_each_free_mem_range(i, NUMA_NO_NODE, MEMBLOCK_NONE, &start, &end,
-				NULL)
-		count += __free_memory_core(start, end);
+				&nid)
+		count += __free_memory_core(start, end, nid);
 
 	return count;
 }

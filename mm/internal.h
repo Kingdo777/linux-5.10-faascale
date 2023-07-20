@@ -193,6 +193,15 @@ extern void __putback_isolated_page(struct page *page, unsigned int order,
 				    int mt);
 extern void memblock_free_pages(struct page *page, unsigned long pfn,
 					unsigned int order);
+#ifdef CONFIG_FAASCALE_MEMORY
+extern void faascale_mem_region_init(struct faascale_mem_region *region);
+extern void faascale_mem_region_free(struct faascale_mem_region *region);
+extern void memblock_free_pages_to_faascale_mem(struct page *page, unsigned int order);
+extern void add_block_to_region(struct faascale_mem_region *region, struct faascale_mem_block *block);
+extern void free_one_block(struct faascale_mem_block *block);
+extern struct faascale_mem_block *alloc_zone_block(struct zone *zone, int order, bool split);
+extern bool page_in_region(struct page *page, struct faascale_mem_region *region);
+#endif
 extern void __free_pages_core(struct page *page, unsigned int order);
 extern void prep_compound_page(struct page *page, unsigned int order);
 extern void post_alloc_hook(struct page *page, unsigned int order,
@@ -277,6 +286,14 @@ static inline unsigned int buddy_order(struct page *page)
 	/* PageBuddy() must be checked by the caller */
 	return page_private(page);
 }
+
+#ifdef CONFIG_FAASCALE_MEMORY
+static inline unsigned int block_buddy_order(struct page *page)
+{
+	/* PageBlock() must be checked by the caller */
+	return page_private(page);
+}
+#endif
 
 /*
  * Like buddy_order(), but for callers who cannot afford to hold the zone lock.

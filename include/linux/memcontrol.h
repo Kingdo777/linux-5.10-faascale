@@ -28,6 +28,19 @@ struct page;
 struct mm_struct;
 struct kmem_cache;
 
+#ifdef CONFIG_FAASCALE_MEMORY
+
+#define FAASCALE_MEMORY_MIN_BLOCK_SIZE (_AC(1,UL) << FAASCALE_MEMORY_MIN_BLOCK_SHIFT)
+#define FAASCALE_MEMORY_MIN_BLOCK_PAGES (_AC(1,UL) << (FAASCALE_MEMORY_MIN_BLOCK_SHIFT - PAGE_SHIFT))
+
+#define FAASCALE_MEMORY_MAX_BLOCK_SIZE (_AC(1,UL) << FAASCALE_MEMORY_MAX_BLOCK_SHIFT)
+#define FAASCALE_MEMORY_MAX_BLOCK_PAGES (_AC(1,UL) << (FAASCALE_MEMORY_MAX_BLOCK_SHIFT - PAGE_SHIFT))
+
+#define FAASCALE_MEMORY_MIN_REGION_SIZE (_AC(1,UL) << FAASCALE_MEMORY_MIN_REGION_SHIFT)
+#define FAASCALE_MEMORY_MAX_REGION_SIZE (_AC(1,UL) << FAASCALE_MEMORY_MAX_REGION_SHIFT)
+
+#endif
+
 /* Cgroup-specific page state, on top of universal node page state */
 enum memcg_stat_item {
 	MEMCG_SWAP = NR_VM_NODE_STAT_ITEMS,
@@ -305,6 +318,22 @@ struct mem_cgroup {
 #endif
 
 	MEMCG_PADDING(_pad2_);
+
+#ifdef CONFIG_FAASCALE_MEMORY
+	// read_only
+	bool faascale_mem_enable;
+	/**
+	 * 读写的单位为字节，写入时通过向上舍入的方法获取最“合理”的值
+	 * 合理的定义是尽可能少的分配块,如果要分配的内存很大，那么就不要分配很小的块，可以在一定程度上容忍资源浪费
+	 * */
+	unsigned long faascale_mem_size;
+
+	struct faascale_mem_region region;
+
+	//	struct memcg_faascale_mem_stats faascale_mem_stats;
+
+	MEMCG_PADDING(_pad3_);
+#endif
 
 	/*
 	 * set > 0 if pages under this cgroup are moving to other cgroup.

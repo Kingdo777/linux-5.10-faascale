@@ -3557,6 +3557,9 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 	struct page *page;
 	vm_fault_t ret = 0;
 	pte_t entry;
+#ifdef CONFIG_FAASCALE_MEMORY
+	struct mem_cgroup * memcg;
+#endif
 
 	/* File mapping without ->vm_ops ? */
 	if (vma->vm_flags & VM_SHARED)
@@ -3604,7 +3607,16 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 	/* Allocate our own private page. */
 	if (unlikely(anon_vma_prepare(vma)))
 		goto oom;
+#ifdef CONFIG_FAASCALE_MEMORY
+	memcg = get_mem_cgroup_from_mm(vma->vm_mm);
+    if (likely(memcg->faascale_mem_enable))
+        page = alloc_zeroed_user_highpage_movable_from_faascale_mem_region(vma, vmf->address);
+    else
+        page = alloc_zeroed_user_highpage_movable(vma, vmf->address);
+    css_put(&memcg->css);
+#else
 	page = alloc_zeroed_user_highpage_movable(vma, vmf->address);
+#endif
 	if (!page)
 		goto oom;
 

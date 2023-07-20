@@ -1177,6 +1177,7 @@ void __init setup_arch(char **cmdline_p)
 	if (!early_xdbc_setup_hardware())
 		early_xdbc_register_console();
 
+	e820__print_table("KINGDO:");
 	x86_init.paging.pagetable_init();
 
 	kasan_init();

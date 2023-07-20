@@ -718,6 +718,9 @@ PAGEFLAG_FALSE(DoubleMap)
 #define PG_kmemcg	0x00000200
 #define PG_table	0x00000400
 #define PG_guard	0x00000800
+#ifdef CONFIG_FAASCALE_MEMORY
+#define PG_block	0x00001000
+#endif
 
 #define PageType(page, flag)						\
 	((page->page_type & (PAGE_TYPE_BASE | flag)) == PAGE_TYPE_BASE)
@@ -748,6 +751,10 @@ static __always_inline void __ClearPage##uname(struct page *page)	\
  * (see mm/page_alloc.c).
  */
 PAGE_TYPE_OPS(Buddy, buddy)
+
+#ifdef CONFIG_FAASCALE_MEMORY
+PAGE_TYPE_OPS(Block, block)
+#endif
 
 /*
  * PageOffline() indicates that the page is logically offline although the
