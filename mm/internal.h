@@ -202,6 +202,11 @@ extern void free_one_block(struct faascale_mem_block *block);
 extern struct faascale_mem_block *alloc_zone_block(struct zone *zone, int order, bool split);
 extern bool page_in_region(struct page *page, struct faascale_mem_region *region);
 #endif
+#ifdef CONFIG_VIRTIO_FAASCALE_MEM
+int scale_faascale_block(struct list_head *block_list, bool pop);
+extern bool block_populate_check(struct list_head *block_list);
+extern bool virtio_faascale_mem_is_enable(void);
+#endif
 extern void __free_pages_core(struct page *page, unsigned int order);
 extern void prep_compound_page(struct page *page, unsigned int order);
 extern void post_alloc_hook(struct page *page, unsigned int order,

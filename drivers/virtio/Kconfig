@@ -84,6 +84,17 @@ config VIRTIO_BALLOON
 
 	 If unsure, say M.
 
+config VIRTIO_FAASCALE_MEM
+     	tristate "Virtio faascale mem driver"
+     	depends on X86_64
+     	depends on VIRTIO
+     	depends on FAASCALE_MEMORY
+     	help
+     	 This driver supports increasing and decreasing the amount
+     	 of faascale memory blocks within a KVM guest.
+
+     	 If unsure, say M.
+
 config VIRTIO_MEM
 	tristate "Virtio mem driver"
 	default m

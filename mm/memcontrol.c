@@ -5027,7 +5027,7 @@ static ssize_t memory_faascale_size_write(struct kernfs_open_file *of,
     unsigned long size, size_order, size_for_write;
     char *end;
     u64 bytes;
-    int blocks_count[FAASCALE_MEMORY_MAX_ORDER], i;
+    int blocks_count[FAASCALE_MEMORY_MAX_ORDER], i, err;
     struct zonelist* zonelist;
     struct zoneref *z;
     struct zone *zone;
@@ -5035,10 +5035,15 @@ static ssize_t memory_faascale_size_write(struct kernfs_open_file *of,
     LIST_HEAD(block_list);
     struct list_head *pos, *n;
 
+    if (!virtio_faascale_mem_is_enable()){
+		pr_info( "KINGDO: Virtio Faascale Memory is disabled.\n");
+		return -EINVAL;
+    }
+
     size = READ_ONCE(memcg->faascale_mem_size);
     if (size != 0) {
-        pr_info( "KINGDO: Faascale Memory has been enabled.\n");
-        return -EINVAL;
+		pr_info("KINGDO: Faascale Memory has been enabled.\n");
+		return -EINVAL;
     }
 
     buf = strstrip(buf);
@@ -5096,23 +5101,31 @@ static ssize_t memory_faascale_size_write(struct kernfs_open_file *of,
 			// 我真是天才，想到这行代码
 			if (order > 0)
 				blocks_count[order - 1] += 2;
-			else
-				goto insufficient_blocks;
+			else{
+				pr_err( "KINGDO: Faascale Blocks is insufficirnt.\n");
+				goto release_blocks;
+			}
 			continue;
 
 		find_block:
 			list_add_tail(&block->list, &block_list);
 		}
     }
+    err = scale_faascale_block(&block_list,true);
+    if(err){
+		pr_err( "KINGDO: populate faascale block failed.\n");
+		goto release_blocks;
+    }
+    BUG_ON(!block_populate_check(&block_list));
+
 	goto build_region;
-insufficient_blocks:
+release_blocks:
 	list_for_each_safe(pos, n, &block_list){
 		block = list_entry(pos, struct faascale_mem_block, list);
 		list_del(pos);
 		free_one_block(block);
 	}
 	BUG_ON(!list_empty(&block_list));
-	pr_info( "KINGDO: Faascale Blocks is insufficirnt.");
 	return -EINVAL;
 build_region:
 	list_for_each_safe(pos, n,&block_list){

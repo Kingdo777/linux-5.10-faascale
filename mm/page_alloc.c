@@ -9459,9 +9459,14 @@ void faascale_mem_region_init(struct faascale_mem_region *region)
 void faascale_mem_region_free(struct faascale_mem_region *region){
 	struct list_head *pos, *n;
 	struct faascale_mem_block *block;
+	int err;
 	spin_lock(&region->lock);
 	BUG_ON(region->buddy_block_count != region->free_area[MAX_ORDER -1].nr_free);
 	// pr_err("KINGDO: buddy_block_count = %lu, free_area.nr_free = %lu\n",region->buddy_block_count, region->free_area[MAX_ORDER -1].nr_free);
+	err = scale_faascale_block(&region->block_list, false);
+	if(err)
+		pr_warn("KINGDO: depopulate faascale block failed\n");
+
 	list_for_each_safe(pos, n, &region->block_list) {
 		block = list_entry(pos, struct faascale_mem_block, list);
 		list_del(pos);
