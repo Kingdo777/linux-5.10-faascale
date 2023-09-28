@@ -14,7 +14,6 @@ net_scripts=$KERNEL_DIR/zxm/scripts/network
 check_root() {
   if [ "$(id -u)" != "0" ]; then
     echo "superuser privileges are required to run"
-    echo "sudo $0 build_rootfs"
     exit 1
   fi
 }
@@ -42,8 +41,8 @@ run) ;;
 run_qmp_sock)
   specific_qemu_args=$(
     cat <<EOF
-  -qmp unix:qmp.sock,server=on,wait=off
   -m 8G -smp 4 --enable-kvm -cpu host
+  -qmp unix:/tmp/qmp.sock,server=on,wait=off
 EOF
   )
   ;;
@@ -54,7 +53,7 @@ run_virtio_mem)
   -smp 4 --enable-kvm -cpu host
   -object memory-backend-ram,id=vmem0,size=8G,prealloc=off
   -device virtio-mem-pci,id=vm0,memdev=vmem0,node=0,requested-size=0,block-size=4M,prealloc=on
-  -qmp unix:qmp.sock,server=on,wait=off
+  -qmp unix:/tmp/qmp.sock,server=on,wait=off
 EOF
   )
   ;;
@@ -70,12 +69,22 @@ run_numa)
   -numa node,nodeid=1,cpus=2-3,memdev=mem1
   -object memory-backend-ram,id=vmem0,size=8G,prealloc=off
   -device virtio-mem-pci,id=vm0,memdev=vmem0,node=0,requested-size=4M,prealloc=off
-  -qmp unix:qmp.sock,server=on,wait=off
+  -qmp unix:/tmp/qmp.sock,server=on,wait=off
 EOF
   )
   ;;
 debug)
   specific_qemu_args="-m 1024 -s -S"
+  ;;
+help)
+  echo "Usage: $0 [run|run_qmp_sock|run_virtio_mem|run_numa|debug|help]"
+  echo "  run: run qemu with default args"
+  echo "  run_qmp_sock: run qemu with qmp sock"
+  echo "  run_virtio_mem: run qemu with virtio-mem"
+  echo "  run_numa: run qemu with virtio-mem-numa"
+  echo "  debug: run qemu with gdb"
+  echo "  help: show this help"
+  exit 0
   ;;
 
 esac
