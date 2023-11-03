@@ -183,6 +183,76 @@ DEFINE_STATIC_KEY_FALSE(init_on_free);
 #endif
 EXPORT_SYMBOL(init_on_free);
 
+#ifdef CONFIG_FAASCALE_MEMORY
+
+#define FAASCALE_MAX_BUDDY_RANGES 10
+
+struct buddy_mem_range {
+	unsigned long start_pfn;
+	unsigned long pages;
+};
+
+enum buddy_mem_range_type {
+	FAASCALE_BUDDY_RANGE_TYPE_SYSTEM,
+	FAASCALE_BUDDY_RANGE_TYPE_FAASCALE,
+};
+
+static struct buddy_mem_range faascale_buddy_ranges[FAASCALE_MAX_BUDDY_RANGES];
+static int faascale_buddy_ranges_count = 0;
+
+static struct buddy_mem_range system_buddy_ranges[FAASCALE_MAX_BUDDY_RANGES];
+static int system_buddy_ranges_count = 0;
+
+static void add_buddy_mem_range(unsigned long pfn, unsigned long pages, enum buddy_mem_range_type type)
+{
+	struct buddy_mem_range *buddy_ranges;
+	int *buddy_ranges_count;
+
+	if (type == FAASCALE_BUDDY_RANGE_TYPE_SYSTEM) {
+		buddy_ranges = system_buddy_ranges;
+		buddy_ranges_count = &system_buddy_ranges_count;
+	} else {
+		buddy_ranges = faascale_buddy_ranges;
+		buddy_ranges_count = &faascale_buddy_ranges_count;
+	}
+
+	BUG_ON(*buddy_ranges_count >= FAASCALE_MAX_BUDDY_RANGES);
+	if (*buddy_ranges_count == 0) {
+		buddy_ranges[0].start_pfn = pfn;
+		buddy_ranges[0].pages = pages;
+		return;
+	}
+
+	if (pfn == buddy_ranges[*buddy_ranges_count].start_pfn + buddy_ranges[*buddy_ranges_count].pages) {
+		buddy_ranges[*buddy_ranges_count].pages += pages;
+	} else {
+		*buddy_ranges_count += 1;
+		buddy_ranges[*buddy_ranges_count].start_pfn = pfn;
+		buddy_ranges[*buddy_ranges_count].pages = pages;
+	}
+}
+
+static bool check_buddy_mem_range(unsigned long pfn, enum buddy_mem_range_type type){
+	struct buddy_mem_range *buddy_ranges;
+	int *buddy_ranges_count, i;
+
+	if (type == FAASCALE_BUDDY_RANGE_TYPE_SYSTEM) {
+		buddy_ranges = system_buddy_ranges;
+		buddy_ranges_count = &system_buddy_ranges_count;
+	} else {
+		buddy_ranges = faascale_buddy_ranges;
+		buddy_ranges_count = &faascale_buddy_ranges_count;
+	}
+
+	for (i = 0; i < *buddy_ranges_count; i++) {
+		if (pfn >= buddy_ranges[i].start_pfn && pfn < buddy_ranges[i].start_pfn + buddy_ranges[i].pages)
+			return true;
+	}
+	return false;
+}
+
+#endif
+
 static int __init early_init_on_alloc(char *buf)
 {
 	int ret;
@@ -1819,6 +1889,8 @@ void memblock_free_pages_to_faascale_mem(struct page *page, unsigned int order)
 	struct free_faascale_block_area *faascale_block;
 
 	pr_info("KINGDO: order=%d, pfn=%ld\n",order,page_to_pfn(page));
+	BUG_ON(faascale_buddy_ranges_count >= FAASCALE_MAX_BUDDY_RANGES);
+	add_buddy_mem_range(page_to_pfn(page), 1 >> faascale_mem_block_order_2_pages(order), FAASCALE_BUDDY_RANGE_TYPE_FAASCALE);
 
 	/*
 	 * When initializing the memmap, __init_single_page() sets the refcount
@@ -1856,6 +1928,10 @@ void __init memblock_free_pages(struct page *page, unsigned long pfn,
 {
 	if (early_page_uninitialised(pfn))
 		return;
+#ifdef CONFIG_FAASCALE_MEMORY
+	pr_info("KINGDO: for system: order=%d, pfn=%ld\n", order, page_to_pfn(page));
+	add_buddy_mem_range(page_to_pfn(page), 1 >> order, FAASCALE_BUDDY_RANGE_TYPE_SYSTEM);
+#endif
 	__free_pages_core(page, order);
 }
 
@@ -5364,7 +5440,12 @@ out:
 	}
 
 	trace_mm_page_alloc(page, order, alloc_mask, ac.migratetype);
-
+#ifdef CONFIG_FAASCALE_MEMORY
+	if(alloc_mask & __GFP_FAASCALE)
+		BUG_ON(check_buddy_mem_range(page_to_pfn(page), FAASCALE_BUDDY_RANGE_TYPE_FAASCALE));
+	else
+		BUG_ON(check_buddy_mem_range(page_to_pfn(page), FAASCALE_BUDDY_RANGE_TYPE_SYSTEM));
+#endif
 	return page;
 }
 EXPORT_SYMBOL(__alloc_pages_nodemask);
