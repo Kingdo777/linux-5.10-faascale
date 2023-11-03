@@ -20,3 +20,8 @@ CONFIG_VIRTIO_BLK
 
 otherwise, we will get the kernel panic:
 ``virtio-blk VFS: Cannot open root device "vda"``
+
+If you plan to connect to the Internet using virtio, make sure to enable the NET CONFIG as well:
+```config
+CONFIG_VIRTIO_NET
+```

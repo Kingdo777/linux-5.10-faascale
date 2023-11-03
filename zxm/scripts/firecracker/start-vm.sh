@@ -39,8 +39,8 @@ curl --unix-socket /tmp/firecracker.socket -i  \
   -H 'Accept: application/json'            \
   -H 'Content-Type: application/json'      \
   -d '{
-      "vcpu_count": 2,
-      "mem_size_mib": 1024
+      "vcpu_count": 4,
+      "mem_size_mib": 5120
   }'
 
 # Installing the balloon device
@@ -55,6 +55,18 @@ curl --unix-socket /tmp/firecracker.socket -i \
         \"amount_mib\": $amount_mib, \
         \"deflate_on_oom\": $deflate_on_oom, \
         \"stats_polling_interval_s\": $polling_interval \
+    }"
+
+# Installing the faascale_mem device
+polling_interval=0
+curl --unix-socket /tmp/firecracker.socket -i \
+    -X PUT 'http://localhost/faascale_mem' \
+    -H 'Accept: application/json' \
+    -H 'Content-Type: application/json' \
+    -d "{
+        \"stats_polling_interval_s\": $polling_interval, \
+        \"pre_alloc_mem\": true, \
+        \"pre_tdp_fault\": true \
     }"
 
 curl --unix-socket /tmp/firecracker.socket -i \
