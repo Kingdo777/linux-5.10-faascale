@@ -5675,6 +5675,9 @@ int cgroup_rmdir(struct kernfs_node *kn)
 {
 	struct cgroup *cgrp;
 	int ret = 0;
+#ifdef CONFIG_FAASCALE_MEMORY
+	struct mem_cgroup *memcg;
+#endif
 
 	cgrp = cgroup_kn_lock_live(kn, false);
 	if (!cgrp)
@@ -5683,6 +5686,13 @@ int cgroup_rmdir(struct kernfs_node *kn)
 	ret = cgroup_destroy_locked(cgrp);
 	if (!ret)
 		TRACE_CGROUP_PATH(rmdir, cgrp);
+#ifdef CONFIG_FAASCALE_MEMORY
+	if (cgrp->subsys[memory_cgrp_id]) {
+		memcg = mem_cgroup_from_css(cgrp->subsys[memory_cgrp_id]);
+		BUG_ON (memcg == NULL);
+		memory_faascale_free(memcg);
+	}
+#endif
 
 	cgroup_kn_unlock(kn);
 	return ret;

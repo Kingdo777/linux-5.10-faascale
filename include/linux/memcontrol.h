@@ -39,6 +39,8 @@ struct kmem_cache;
 #define FAASCALE_MEMORY_MIN_REGION_SIZE (_AC(1,UL) << FAASCALE_MEMORY_MIN_REGION_SHIFT)
 #define FAASCALE_MEMORY_MAX_REGION_SIZE (_AC(1,UL) << FAASCALE_MEMORY_MAX_REGION_SHIFT)
 
+int memory_faascale_free(struct mem_cgroup *memcg);
+
 #endif
 
 /* Cgroup-specific page state, on top of universal node page state */

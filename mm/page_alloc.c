@@ -9536,6 +9536,18 @@ void faascale_mem_region_init(struct faascale_mem_region *region)
 	spin_lock_init(&region->lock);
 }
 
+void faascale_mem_region_reset(struct faascale_mem_region *region)
+{
+	unsigned int order, t;
+	BUG_ON(!list_empty(&region->block_list));
+	for_each_migratetype_order(order, t) {
+		INIT_LIST_HEAD(&region->free_area[order].free_list[t]);
+		region->free_area[order].nr_free = 0;
+	}
+	region->buddy_block_count = 0;
+	region->kingdo_magic = 0;
+}
+
 //__attribute__((optimize("O0")))
 void faascale_mem_region_free(struct faascale_mem_region *region){
 	struct list_head *pos, *n;
@@ -9555,6 +9567,7 @@ void faascale_mem_region_free(struct faascale_mem_region *region){
 		free_one_block(block);
 		spin_lock(&region->lock);
 	}
+	faascale_mem_region_reset(region);
 	spin_unlock(&region->lock);
 }
 

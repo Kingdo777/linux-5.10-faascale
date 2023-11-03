@@ -3531,6 +3531,40 @@ static ssize_t mem_cgroup_force_empty_write(struct kernfs_open_file *of,
 	return mem_cgroup_force_empty(memcg) ?: nbytes;
 }
 
+#ifdef CONFIG_FAASCALE_MEMORY
+int memory_faascale_free(struct mem_cgroup *memcg)
+{
+	struct faascale_mem_region *region;
+
+	if (!memcg->faascale_mem_enable)
+		return 0;
+
+	region = &memcg->region;
+
+	if (region->buddy_block_count != region->free_area[MAX_ORDER - 1].nr_free) {
+		pr_warn("Some pages are being occupied, possibly due to processes that have not yet exited in the mem-cgroup.\n");
+		return -EBUSY;
+	}
+
+	faascale_mem_region_free(region);
+	WRITE_ONCE(memcg->faascale_mem_enable, false);
+	WRITE_ONCE(memcg->faascale_mem_size, 0);
+
+	return 0;
+}
+
+static ssize_t memory_faascale_free_write(struct kernfs_open_file *of,
+					    char *buf, size_t nbytes,
+					    loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+
+	if (mem_cgroup_is_root(memcg))
+		return -EINVAL;
+	return memory_faascale_free(memcg) ?: nbytes;
+}
+#endif
+
 static u64 mem_cgroup_hierarchy_read(struct cgroup_subsys_state *css,
 				     struct cftype *cft)
 {
@@ -5271,21 +5305,25 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.read_u64 = mem_cgroup_read_u64,
 	},
 #ifdef CONFIG_FAASCALE_MEMORY
-    {
-            .name = "faascale.enable",
-            .flags = CFTYPE_NOT_ON_ROOT,
-            .seq_show = memory_faascale_enable_show,
-    },
-    {
-            .name = "faascale.size",
-            .flags = CFTYPE_NOT_ON_ROOT,
-            .seq_show = memory_faascale_size_show,
-            .write = memory_faascale_size_write,
-    },
+	{
+		.name = "faascale.enable",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_faascale_enable_show,
+	},
+	{
+		.name = "faascale.size",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_faascale_size_show,
+		.write = memory_faascale_size_write,
+	},
 
 	{
 		.name = "block.state",
 		.flags = CFTYPE_NOT_ON_ROOT,
+	},
+	{
+		.name = "faascale.free",
+		.write = memory_faascale_free_write,
 	},
 #endif
 	{ },	/* terminate */
@@ -5425,9 +5463,12 @@ static void __mem_cgroup_free(struct mem_cgroup *memcg)
 	 * 目前我们仅仅是针对匿名页才使用block的内存，但是当我们删除一个memcg的目录时，并不一定会
 	 * 触发该函数，因为用作pagecache的页还没有被回收，这些页依然拥有memcg.css的引用计数,
 	 * 可以通过命令 `echo 1 > /sys/fs/cgroup/memory/test/memory.force_empty`来进行清除
+	 *
+	 * 可以通过`echo 1 > /sys/fs/cgroup/memory/test/memory.faascale.free`手动释放，
+	 * 释放之后mem-cgroup将变成普通的cgroup，可以再次被enable为faascale memcgroup
 	*/
 	if(memcg->faascale_mem_enable)
-		faascale_mem_region_free(&memcg->region);
+		memory_faascale_free(memcg);
 #endif
 	kfree(memcg);
 }
